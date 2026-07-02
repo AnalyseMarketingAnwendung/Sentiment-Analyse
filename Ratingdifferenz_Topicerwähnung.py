@@ -13,11 +13,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-
-# =========================================================
-# KONFIGURATION
-# =========================================================
-
 PROJECT_DIR = BASE_DIR.parent
 DATA_DIR = PROJECT_DIR / "data"
 SERVQUAL_OUTPUT_DIR = BASE_DIR / "servqual_outputs"
@@ -59,10 +54,6 @@ plt.rcParams["font.weight"] = "bold"
 plt.rcParams["axes.labelweight"] = "bold"
 plt.rcParams["axes.titleweight"] = "bold"
 
-
-# =========================================================
-# HILFSFUNKTIONEN
-# =========================================================
 
 def normalize_user_id(value):
     if pd.isna(value):
@@ -109,10 +100,6 @@ def style_plot(ax):
     for spine in ax.spines.values():
         spine.set_color("black")
 
-
-# =========================================================
-# REVIEW-LEVEL DATEN AUS ABSA + ORIGINALRATINGS MERGEN
-# =========================================================
 
 def load_yelp_review_level():
     absa = pd.read_excel(ABSA_STRENG_FILE)
@@ -168,10 +155,6 @@ def prepare_reviews():
 
     return reviews
 
-
-# =========================================================
-# AGGREGATION
-# =========================================================
 
 def build_store_topic_table(reviews):
     agg_dict = {
@@ -302,10 +285,6 @@ def plot_topic_rating_effects(effects):
     fig.savefig(TOPIC_RATING_EFFECTS_PLOT_FILE, dpi=250)
     plt.close(fig)
 
-
-# =========================================================
-# PLOTS
-# =========================================================
 
 def plot_single_rating_classes(class_table):
     for _, row in class_table.iterrows():
