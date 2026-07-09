@@ -1,8 +1,3 @@
-# ============================================================
-# ABSA-Sentiment-Pipeline mit Rating-Lexikon, Topic-Lexikon,
-# Topic-Seed-Fallback, Satzanalyse und Review-Aggregation
-# ============================================================
-
 from pathlib import Path
 from datetime import datetime
 from collections import defaultdict
