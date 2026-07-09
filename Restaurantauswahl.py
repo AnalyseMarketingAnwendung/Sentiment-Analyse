@@ -1,9 +1,7 @@
-# vorher installieren:
-# pip install pandas openpyxl
+
 
 import pandas as pd
 
-# Excel laden
 df = pd.read_excel(
     "../data/ChickFilA_Bereinigt.xlsx"
 )
@@ -32,9 +30,6 @@ df = df[
     .isin(allowed_categories)
 ]
 
-# -------------------------------------------------
-# 1) Nur Restaurants mit mehreren Filialen behalten
-# -------------------------------------------------
 
 filial_counts = (
     df.groupby("business_name")["store_id"]
@@ -50,9 +45,7 @@ df = df[
     df["business_name"].isin(mehrere_filialen_namen)
 ]
 
-# -------------------------------------------------
-# 2) Durchschnittsbewertung pro Filiale berechnen
-# -------------------------------------------------
+
 
 filialen_level = (
     df.groupby(["business_name", "store_id"])
@@ -64,9 +57,7 @@ filialen_level = (
     .reset_index()
 )
 
-# -------------------------------------------------
-# 3) Statistik auf Restaurant-/Kettenebene
-# -------------------------------------------------
+
 
 restaurant_stats = (
     filialen_level.groupby("business_name")
@@ -80,9 +71,7 @@ restaurant_stats = (
     .reset_index()
 )
 
-# -------------------------------------------------
-# 4) Spaltenreihenfolge festlegen
-# -------------------------------------------------
+
 
 restaurant_stats = restaurant_stats[
     [
@@ -95,18 +84,13 @@ restaurant_stats = restaurant_stats[
     ]
 ]
 
-# -------------------------------------------------
-# 5) Nach Anzahl Filialen sortieren
-# -------------------------------------------------
+
 
 restaurant_stats = restaurant_stats.sort_values(
     by="anzahl_filialen",
     ascending=False
 )
 
-# -------------------------------------------------
-# 6) Ergebnis als Excel speichern
-# -------------------------------------------------
 
 restaurant_stats.to_excel(
     "../data/filialauswahl2.xlsx",
