@@ -140,12 +140,6 @@ def build_topic_rating_effects(reviews):
         rating = reviews["rating"]
         sentiment = reviews[topic]
 
-        valid_sentiment = sentiment.notna() & rating.notna()
-        if valid_sentiment.sum() >= 3 and sentiment[valid_sentiment].nunique() > 1:
-            slope, intercept = np.polyfit(sentiment[valid_sentiment], rating[valid_sentiment], 1)
-        else:
-            slope, intercept = np.nan, np.nan
-
         rows.append({
             "topic": topic,
             "reviews_total": int(rating.notna().sum()),
@@ -154,10 +148,7 @@ def build_topic_rating_effects(reviews):
             "rating_when_topic_mentioned": rating[mentioned == 1].mean(),
             "rating_when_topic_not_mentioned": rating[mentioned == 0].mean(),
             "mention_rating_difference": rating[mentioned == 1].mean() - rating[mentioned == 0].mean(),
-            "mention_rating_correlation": rating.corr(mentioned),
             "topic_sentiment_rating_correlation": rating.corr(sentiment),
-            "topic_sentiment_rating_slope": slope,
-            "topic_sentiment_rating_intercept": intercept,
         })
 
     return pd.DataFrame(rows).sort_values("mention_rating_difference", ascending=False)
