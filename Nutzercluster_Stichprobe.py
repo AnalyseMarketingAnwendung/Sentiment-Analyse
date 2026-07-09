@@ -26,6 +26,7 @@ CORRELATION_MATRIX_FILE = OUTPUT_DIR / "kundenunterschiede_korrelationsmatrix.xl
 SAMPLE_SIZE = 2000
 K_CLUSTERS = 4
 RANDOM_SEED = 42
+TOPICS = ["FOOD", "DRINKS", "SERVICE", "SPEED", "HYGIENE", "VALUE", "AMBIENCE", "PARKING", "ACCESSIBILITY"]
 
 plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["font.sans-serif"] = ["Helvetica", "Arial", "DejaVu Sans"]
@@ -36,23 +37,46 @@ plt.rcParams["axes.titleweight"] = "bold"
 
 def load_users():
     users = pd.read_excel(USER_FEATURES_FILE)
-    corr = pd.read_excel(CORRELATION_MATRIX_FILE, index_col=0)
-    feature_cols = [col for col in corr.columns if col in users.columns and col != "avg_star_rating"]
+    feature_cols = [
+        "full_review_count_without_chickfila",
+        "full_avg_rating_without_chickfila",
+        "full_rating_std_without_chickfila",
+        "full_avg_review_word_count",
+        "full_unique_category_count",
+        "full_fast_food_category_share",
+        "full_avg_price_level",
+        "cfa_visited_weekend",
+        "cfa_visited_morning",
+        "cfa_visited_afternoon",
+        "cfa_visited_evening",
+        "cfa_visited_night",
+        "reviewed_chickfila_more_than_once",
+    ]
+    feature_cols = [col for col in feature_cols if col in users.columns]
     return users, feature_cols
+
+def transform_features(df, feature_cols, medians=None, means=None, stds=None):
+    xdf = df[feature_cols].copy()
+    for col in xdf.columns:
+        xdf[col] = pd.to_numeric(xdf[col], errors="coerce")
+    if medians is None:
+        medians = xdf.median(numeric_only=True).fillna(0)
+    xdf = xdf.fillna(medians)
+    for col in ["full_review_count_without_chickfila"]:
+        if col in xdf.columns:
+            xdf[col] = np.log1p(xdf[col])
+    if means is None:
+        means = xdf.mean()
+    if stds is None:
+        stds = xdf.std(ddof=0).replace(0, 1)
+    x = ((xdf - means) / stds).to_numpy(dtype=float)
+    return xdf, x, medians, means, stds
 
 def prepare_cluster_data(users, feature_cols):
     sample = users.sample(min(SAMPLE_SIZE, len(users)), random_state=RANDOM_SEED).copy()
-    xdf = sample[feature_cols].copy()
-    for col in xdf.columns:
-        xdf[col] = pd.to_numeric(xdf[col], errors="coerce")
-        xdf[col] = xdf[col].fillna(xdf[col].median())
-    for col in ["review_count_dataset", "total_review_words", "yelp_user_review_count"]:
-        if col in xdf.columns:
-            xdf[col] = np.log1p(xdf[col])
-    means = xdf.mean()
-    stds = xdf.std(ddof=0).replace(0, 1)
-    x = ((xdf - means) / stds).to_numpy(dtype=float)
-    return sample, xdf, x
+    sample_xdf, sample_x, medians, means, stds = transform_features(sample, feature_cols)
+    all_xdf, all_x, _, _, _ = transform_features(users, feature_cols, medians=medians, means=means, stds=stds)
+    return sample, sample_xdf, sample_x, all_xdf, all_x, medians, means, stds
 
 def run_kmeans(x, k=4, seed=42, max_iter=120):
     rng = np.random.default_rng(seed)
@@ -71,22 +95,29 @@ def run_kmeans(x, k=4, seed=42, max_iter=120):
     distances = ((x[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2)
     return distances.argmin(axis=1), centers
 
+def assign_kmeans(x, centers):
+    distances = ((x[:, None, :] - centers[None, :, :]) ** 2).sum(axis=2)
+    labels = distances.argmin(axis=1)
+    min_distances = np.sqrt(distances.min(axis=1))
+    return labels, min_distances
+
 def pca_2d(x):
     centered = x - x.mean(axis=0)
     _, _, vt = np.linalg.svd(centered, full_matrices=False)
     return centered @ vt[:2].T
 
 def label_cluster(row):
-    if row.get("avg_rating_without_chickfila", np.nan) < 3:
+    avg_without_cfa = row.get("full_avg_rating_without_chickfila", row.get("avg_rating_without_chickfila", np.nan))
+    if avg_without_cfa < 3:
         base = "generell kritisch"
-    elif row.get("avg_rating_without_chickfila", np.nan) >= 4.2:
+    elif avg_without_cfa >= 4.2:
         base = "generell positiv"
     else:
         base = "mittleres Bewertungsniveau"
-    if row.get("avg_review_word_count", np.nan) >= 80:
+    if row.get("full_avg_review_word_count", row.get("avg_review_word_count", np.nan)) >= 80:
         return base + ", ausführlich"
-    if row.get("review_count_dataset", 0) >= 2:
-        return base + ", mehrfach aktiv"
+    if row.get("full_review_count_without_chickfila", row.get("review_count_dataset", 0)) >= 20:
+        return base + ", sehr aktiv"
     return base + ", gelegentlich"
 
 def build_profiles(sample, feature_cols):
@@ -96,6 +127,52 @@ def build_profiles(sample, feature_cols):
     profile = profile.reset_index()
     profile["cluster_label"] = profile.apply(label_cluster, axis=1)
     return profile
+
+def build_sentiment_profile(users_out):
+    sentiment_cols = [f"{topic}_sentiment_mean" for topic in TOPICS if f"{topic}_sentiment_mean" in users_out.columns]
+    profile = users_out.groupby("cluster")[sentiment_cols].mean().reset_index()
+    profile = profile.rename(columns={f"{topic}_sentiment_mean": topic for topic in TOPICS})
+    counts = users_out.groupby("cluster")[sentiment_cols].count().reset_index()
+    counts = counts.rename(columns={f"{topic}_sentiment_mean": f"{topic}_n" for topic in TOPICS})
+    return profile, counts
+
+def build_cluster_description(profile, sentiment_profile):
+    merged = profile.merge(sentiment_profile, on="cluster", how="left")
+    rows = []
+    for _, row in merged.sort_values("cluster").iterrows():
+        strengths = []
+        if row.get("full_review_count_without_chickfila", 0) >= merged["full_review_count_without_chickfila"].quantile(0.75):
+            strengths.append("sehr aktive und erfahrene Reviewer")
+        if row.get("cfa_visited_morning", 0) >= 0.8:
+            strengths.append("Chick-fil-A vor allem morgens")
+        if row.get("cfa_visited_afternoon", 0) >= 0.8:
+            strengths.append("Chick-fil-A vor allem nachmittags")
+        if row.get("cfa_visited_evening", 0) >= 0.35:
+            strengths.append("Chick-fil-A haeufig abends")
+        if row.get("reviewed_chickfila_more_than_once", 0) >= 0.2:
+            strengths.append("haeufiger Mehrfachbewertungen")
+
+        topic_values = {topic: row.get(topic, np.nan) for topic in TOPICS if topic in row.index}
+        valid_topics = {topic: value for topic, value in topic_values.items() if pd.notna(value)}
+        top_topics = sorted(valid_topics.items(), key=lambda item: item[1], reverse=True)[:3]
+        low_topics = sorted(valid_topics.items(), key=lambda item: item[1])[:3]
+        rows.append({
+            "cluster": int(row["cluster"]),
+            "user_count": int(row["user_count"]),
+            "kurzbeschreibung": "; ".join(strengths) if strengths else "durchschnittliches Nutzerprofil",
+            "sentiment_tendenz": f"staerker: {', '.join(f'{k} {v:.2f}' for k, v in top_topics)}; schwaecher: {', '.join(f'{k} {v:.2f}' for k, v in low_topics)}",
+            "reviews_ohne_chickfila": row.get("full_review_count_without_chickfila", np.nan),
+            "rating_ohne_chickfila": row.get("full_avg_rating_without_chickfila", np.nan),
+            "reviewlaenge": row.get("full_avg_review_word_count", np.nan),
+            "fast_food_anteil": row.get("full_fast_food_category_share", np.nan),
+            "cfa_wochenende": row.get("cfa_visited_weekend", np.nan),
+            "cfa_morgens": row.get("cfa_visited_morning", np.nan),
+            "cfa_nachmittags": row.get("cfa_visited_afternoon", np.nan),
+            "cfa_abends": row.get("cfa_visited_evening", np.nan),
+            "cfa_nachts": row.get("cfa_visited_night", np.nan),
+            "cfa_mehrfach": row.get("reviewed_chickfila_more_than_once", np.nan),
+        })
+    return pd.DataFrame(rows)
 
 def style_plot(ax):
     ax.set_facecolor("white")
@@ -125,7 +202,14 @@ def plot_pca(coords, labels):
     plt.close(fig)
 
 def plot_profiles(profile):
-    plot_cols = ["avg_rating_without_chickfila", "review_count_dataset", "avg_review_word_count", "weekend_share", "avg_local_hour", "FOOD_sentiment_mean", "SERVICE_sentiment_mean", "VALUE_sentiment_mean"]
+    plot_cols = [
+        "full_avg_rating_without_chickfila",
+        "full_review_count_without_chickfila",
+        "full_avg_review_word_count",
+        "full_fast_food_category_share",
+        "cfa_visited_weekend",
+        "reviewed_chickfila_more_than_once",
+    ]
     plot_cols = [col for col in plot_cols if col in profile.columns]
     data = profile.set_index("cluster")[plot_cols]
     scaled = (data - data.min()) / (data.max() - data.min()).replace(0, 1)
@@ -149,10 +233,11 @@ def plot_profiles(profile):
 
 def plot_key_profiles(profile):
     plot_specs = [
-        ("avg_rating_without_chickfila", "Allgemeines Rating ohne Chick-fil-A"),
-        ("avg_review_word_count", "Reviewlänge"),
-        ("review_count_dataset", "Chick-fil-A-Reviews je User"),
-        ("weekend_share", "Wochenendanteil"),
+        ("full_avg_rating_without_chickfila", "Allgemeines Rating ohne Chick-fil-A"),
+        ("full_avg_review_word_count", "Reviewlänge"),
+        ("full_review_count_without_chickfila", "Reviews ohne Chick-fil-A"),
+        ("full_fast_food_category_share", "Fast-Food-Anteil"),
+        ("cfa_visited_weekend", "CFA am Wochenende"),
     ]
     plot_specs = [(col, label) for col, label in plot_specs if col in profile.columns]
     raw = profile.set_index("cluster")[[col for col, _ in plot_specs]].sort_index()
@@ -182,27 +267,48 @@ def plot_key_profiles(profile):
 
 def main():
     users, feature_cols = load_users()
-    sample, xdf, x = prepare_cluster_data(users, feature_cols)
-    labels, centers = run_kmeans(x, k=K_CLUSTERS, seed=RANDOM_SEED)
-    coords = pca_2d(x)
-    sample["cluster"] = labels
+    sample, sample_xdf, sample_x, all_xdf, all_x, medians, means, stds = prepare_cluster_data(users, feature_cols)
+    train_labels, centers = run_kmeans(sample_x, k=K_CLUSTERS, seed=RANDOM_SEED)
+    all_labels, all_distances = assign_kmeans(all_x, centers)
+    coords = pca_2d(sample_x)
+    sample["cluster"] = train_labels
     sample["pca_1"] = coords[:, 0]
     sample["pca_2"] = coords[:, 1]
-    profile = build_profiles(sample, feature_cols)
+    users_out = users.copy()
+    users_out["cluster"] = all_labels
+    users_out["cluster_distance"] = all_distances
+    users_out["is_cluster_training_sample"] = users_out["global_user_id"].isin(sample["global_user_id"]).astype(int)
+    profile = build_profiles(users_out, feature_cols)
+    sentiment_profile, sentiment_counts = build_sentiment_profile(users_out)
+    cluster_description = build_cluster_description(profile, sentiment_profile)
     features_used = pd.DataFrame({"feature": feature_cols})
+    scaling = pd.DataFrame({
+        "feature": feature_cols,
+        "imputation_median": medians.reindex(feature_cols).to_numpy(),
+        "scaling_mean_after_imputation": means.reindex(feature_cols).to_numpy(),
+        "scaling_std_after_imputation": stds.reindex(feature_cols).to_numpy(),
+    })
     summary = pd.DataFrame([
         {"kennzahl": "user_gesamt", "wert": len(users)},
         {"kennzahl": "stichprobe_user", "wert": len(sample)},
+        {"kennzahl": "cluster_zugeordnet_user", "wert": len(users_out)},
         {"kennzahl": "cluster", "wert": K_CLUSTERS},
         {"kennzahl": "cluster_features", "wert": len(feature_cols)},
         {"kennzahl": "avg_star_rating_als_clusterfeature", "wert": 0},
+        {"kennzahl": "sentiments_als_clusterfeature", "wert": 0},
+        {"kennzahl": "clustertraining", "wert": "KMeans-Zentren auf Stichprobe, Zuordnung auf alle User"},
     ])
     with pd.ExcelWriter(OUTPUT_XLSX, engine="openpyxl") as writer:
-        sample.to_excel(writer, sheet_name="cluster_user", index=False)
+        users_out.to_excel(writer, sheet_name="cluster_user", index=False)
+        sample.to_excel(writer, sheet_name="training_sample", index=False)
+        cluster_description.to_excel(writer, sheet_name="cluster_beschreibung", index=False)
         profile.to_excel(writer, sheet_name="cluster_profile", index=False)
+        sentiment_profile.to_excel(writer, sheet_name="sentiment_profile", index=False)
+        sentiment_counts.to_excel(writer, sheet_name="sentiment_counts", index=False)
         features_used.to_excel(writer, sheet_name="features_used", index=False)
+        scaling.to_excel(writer, sheet_name="imputation_scaling", index=False)
         summary.to_excel(writer, sheet_name="summary", index=False)
-    plot_pca(coords, labels)
+    plot_pca(coords, train_labels)
     plot_profiles(profile)
     plot_key_profiles(profile)
     print(f"Excel: {OUTPUT_XLSX}")
@@ -212,3 +318,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
