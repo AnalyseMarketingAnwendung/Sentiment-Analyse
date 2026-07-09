@@ -10,9 +10,6 @@ from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
 
 
-# =========================================================
-# KONFIGURATION
-# =========================================================
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 
@@ -228,10 +225,6 @@ def main():
     print(f"Lexikon-Excel-Datei: {OUTPUT_LEXICON_EXCEL}")
     print(f"Aktuelle Lexikon-Excel-Datei: {OUTPUT_LEXICON_LATEST}")
 
-
-# =========================================================
-# START
-# =========================================================
 
 if __name__ == "__main__":
     main()
