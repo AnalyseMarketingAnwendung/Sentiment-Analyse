@@ -34,9 +34,6 @@ OUTPUT_LEXICON_EXCEL = BASE_DIR / f"generated_sentiment_lexicon_{TIMESTAMP}.xlsx
 OUTPUT_LEXICON_LATEST = BASE_DIR / "generated_sentiment_lexicon_latest.xlsx"
 
 
-# =========================================================
-# HILFSFUNKTIONEN
-# =========================================================
 
 def normalize_text(value):
     if pd.isna(value):
@@ -88,9 +85,6 @@ def read_lexicon_basis(path):
     raise UnicodeDecodeError("csv", b"", 0, 1, "Datei konnte nicht gelesen werden.")
 
 
-# =========================================================
-# LEXIKON ERSTELLEN
-# =========================================================
 
 def build_rating_lexicon(lexicon_source_df):
     print("Bereite Texte und Ratings vor...")
@@ -167,9 +161,6 @@ def build_rating_lexicon(lexicon_source_df):
     return reduced_vectorizer, lexicon
 
 
-# =========================================================
-# MAIN
-# =========================================================
 
 def main():
     if not LEXICON_FILE.exists():
